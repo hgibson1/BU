@@ -1,0 +1,5 @@
+Will compile with:
+g++ -std=c++11 <files>
+
+or
+gcc -std=c++11 <files> -lstdc++
