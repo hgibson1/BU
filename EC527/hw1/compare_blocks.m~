@@ -1,0 +1,62 @@
+
+N = csvread('block*.csv');
+elements = N(:, 1).^2;
+colors = ['g', 'b', 'c', 'm'];
+files = dir('block*.csv');
+
+figure
+scatter(elements, N(:, 2), 'r')
+hold
+for i=1:length(files)
+    M = csvread(files(i).name);
+    scatter(elements, M(:, 2), colors(i));
+end
+xlabel('Elements in Array');
+set(gca, 'xscale', 'log');
+ylabel('Cycles to Execute');
+set(gca, 'yscale', 'log');
+title('ijk performance at range of block sizes');
+legend('unblocked', 'block10', 'block100', 'block1000')
+
+figure
+scatter(elements, N(:, 3), 'r')
+hold
+for i=1:length(files)
+    M = csvread(files(i).name);
+    scatter(elements, M(:, 3), colors(i));
+end
+xlabel('Elements in Array');
+set(gca, 'xscale', 'log');
+ylabel('Cycles to Execute');
+set(gca, 'yscale', 'log');
+title('kij performance at range of block sizes');
+legend('unblocked', 'block10', 'block100', 'block1000')
+
+figure
+scatter(elements, N(:, 4), 'r')
+hold
+for i=1:length(files)
+    M = csvread(files(i).name);
+    scatter(elements, M(:, 4), colors(i));
+end
+xlabel('Elements in Array');
+set(gca, 'xscale', 'log');
+ylabel('Cycles to Execute');
+set(gca, 'yscale', 'log');
+title('jki performance at range of block sizes');
+legend('unblocked', 'block10', 'block100', 'block1000')
+
+
+P = csvread('block100.csv');
+figure
+scatter(100./P(:, 1), P(:, 2)./P(:, 1), 'r');
+hold
+scatter(100./P(:, 1), P(:, 3)./P(:, 1), 'g');
+scatter(100./P(:, 1), P(:, 4)./P(:, 1), 'b');
+xlabel('Block size as a Fraction of side Length');
+%set(gca, 'xscale', 'log');
+ylabel('Cycles per Element to Execute');
+set(gca, 'yscale' , 'log');
+title('cpe of block sizes as a function of Side Length');
+legend('ijk', 'kij', 'jki');
+

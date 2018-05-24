@@ -1,0 +1,84 @@
+#include <msp430.h> 
+
+#define SMCLKRATE 16000000
+#define BAUDRATE 9600
+#define BRDIV16 ((16*SMCLKRATE)/BAUDRATE) //26666
+#define BRDIV (BRDIV16/16) //1666
+#define BRMOD ((BRDIV16-(16*BRDIV)+1)/16) //24999
+#define BRDIVHI (BRDIV/256) //6
+#define BRDIVLO (BRDIV-BRDIVHI*256) //130
+#define UART_TX 0x04
+#define UART_RX 0x02
+
+#define SDA 0x01
+#define SCL 0x02
+
+volatile char last_clock;
+volatile char last_data;
+int bit_count = 0;
+
+
+int main(void) {
+	//calibration for clock
+	    BCSCTL1 = 0xcf; //highest possible frequency setting with divider = 0
+		DCOCTL  = 0xe0; //highest possible frequency setting
+		//Stop watchdog timer
+	    WDTCTL = WDTPW | WDTHOLD;
+
+	    //I2C data and clock busses are inputs, All other pins on port 2 are outputs
+	    P2DIR = ~(SCL + SDA);
+	    //Enable pullup resistors, lines high by default
+	    P2REN = SCL + SDA;
+
+	    P1DIR |= 0x02; //Pin 1 is an output
+
+	    //State varibles
+	    //Initial setting for last clock and last data are both high since high by default
+		last_clock = SCL;
+		last_data = SDA;
+
+	    //Initializing UART
+	    //reset and hold UART state machine
+	    UCA0CTL1 = UCSWRST;
+	    //SMCLK is clock source
+	    UCA0CTL1 |= UCSSEL_2;
+	    //set baud parameters, prescaler hi
+	    UCA0BR1 = BRDIVHI;
+	    //prescaler lo
+	    UCA0BR0 = BRDIVLO;
+	    //modulation
+	    UCA0MCTL = 2*BRMOD;
+	    //Connect transmitter pin
+	    P1SEL |= UART_TX + UART_RX;
+	    P1SEL2 |= UART_TX + UART_RX;
+	    //loop mode enabled
+	    UCA0STAT |=  UCLISTEN;
+	    //allow the UART state machine to operate
+	    UCA0CTL1 &= ~UCSWRST;
+	    //Enable transmit interrupt;
+	    IE2 |= UCA0RXIE;
+
+	    //Setup timer
+	    TA0CTL |= TACLR; // reset clock
+	    //SMCLK is source, divider is zero, up mode
+        TA0CTL |= TASSEL_2 + ID_0 + MC_1 + TAIE;
+        TA0CCTL0 = CCIE; //Interrupt enabled
+        TA0CCR1 = 0x60; //interrupt generated every 100 clock cycles, 1/4 period of I2C data
+        //11 needed to servies interrupt, 29 for interrupt logic
+	    _bis_SR_register(GIE + LPM0_bits);
+}
+
+//Polls input and output pins
+void interrupt timer_handler() {
+	P1OUT |= 0x02;
+	//polls clock and data lines
+    /*char p2in = P2IN;
+    char clock = p2in & SCL;
+    char data = p2in & SDA;
+    if (clock && data != last_data) {
+    	//start or stop condition
+    } else if (!last_clock && clock) {
+    	//clock tranistion from low to high
+    }*/
+}
+ISR_VECTOR(timer_handler,".int08")

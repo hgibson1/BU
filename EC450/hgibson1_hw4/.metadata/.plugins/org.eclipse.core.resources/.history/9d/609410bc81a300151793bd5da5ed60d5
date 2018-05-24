@@ -1,0 +1,103 @@
+#include <msp430.h> 
+
+#define SMCLKRATE 8000000
+#define BAUDRATE 9600
+#define BRDIV16 ((16*SMCLKRATE)/BAUDRATE)
+#define BRDIV (BRDIV16/16)
+#define BRMOD ((BRDIV16-(16*BRDIV)+1)/16)
+#define BRDIVHI (BRDIV/256)
+#define BRDIVLO (BRDIV-BRDIVHI*256)
+
+#define SDA 0x01
+#define SCL 0x02
+#define UART_TX 0x04
+
+char byte_data;
+unsigned int bit_count = 0;
+
+int main(void) {
+	//calibration for clock
+	BCSCTL1 = CALBC1_8MHZ;
+	DCOCTL  = CALDCO_8MHZ;
+	//Stop watchdog timer
+    WDTCTL = WDTPW | WDTHOLD;
+
+    //I2C data and clock busses are inputs, All other pins on port 2 are outputs
+    P2DIR &= ~(SCL + SDA);
+    //Enable pullup resistors, lines high by default
+    P2REN |= SCL + SDA;
+    P2IE |= SDA + SCL;
+    //SCL triggered initially on rising edge, SDA triggered initially on falling edge
+    //SDA is looking for a start condition
+    P2IES |= SDA;
+
+    //Initializing UART
+    //reset and hold UART state machine
+    UCA0CTL1 = UCSWRST;
+    //SMCLK is clock source
+    UCA0CTL1 |= UCSSEL_2;
+    //set baud parameters, prescaler hi
+    UCA0BR1 = BRDIVHI;
+    //prescaler lo
+    UCA0BR0 = BRDIVLO;
+    //modulation
+    UCA0MCTL = 2*BRMOD;
+    //Connect transmitter pin
+    P1SEL |= UART_TX;
+    P1SEL2 |= UART_TX;
+    //allow the UART state machine to operate
+    UCA0CTL1 &= ~UCSWRST;
+	
+    _bis_SR_register(GIE + LPM0_bits);
+}
+
+
+//I2C line interrupt handler
+void interrupt I2C_pulse(){
+	if (P2IFG & SCL && P2IES & SCL) {
+		P2IFG &= ~SCL;
+		//clock line triggered interrupt on falling edge
+		P2IE &= ~SDA; //disable data line interrupt
+		P2IES &= ~SCL; //next interrupt triggered on rising edge
+	} else if (P2IFG & SCL && !(P2IES & SCL)) {
+		P2IFG &= ~SCL;
+		//clock line triggered interrupt on rising edge
+		P2IE |= SDA; //enable data line interrupt
+		P2IES |= SCL; //next interrupt on falling edge
+		char bit = P2IN & SDA;
+		if (bit_count == 8) {
+			//ack or nack
+			byte_data = 0b01010110 | bit;
+			bit_count = 0;
+		} else {
+			byte_data = 0b00110000 | bit;
+			bit_count = bit_count + 1;
+		}
+    } else if (P2IFG & SDA && P2IES & SDA) {
+    	P2IFG &= ~SDA;
+		//Data line triggered interrupt on falling edge
+        //start condition, sends "X"
+	    byte_data = 0b01011000;
+	    bit_count = 0;
+	    IE2 |= UCA0TXIE; //enable data transfer
+	} else if (P2IFG & SDA && !(P2IES & SDA)){
+		P2IFG &= ~SDA;
+		//Data line triggered interrupt on rising edge
+		//stop condition, sends "Y"
+	    byte_data = 0b01011001;
+	    bit_count = 0;
+	    IE2 |= UCA0TXIE; //enable data transder
+	}
+
+}
+ISR_VECTOR(I2C_pulse, ".int03")
+
+
+//UART data transmit handler
+void interrupt tx_handler(){
+	IFG2 &= ~UART_TX; //clear interrupt flag
+	UCA0TXBUF = byte_data; //transfer data
+	IE2 &= ~UCA0TXIE; //Disable transmit interrupt
+}
+ISR_VECTOR(tx_handler, ".int06")
+

@@ -1,0 +1,66 @@
+#include <msp430g2553.h>
+
+#define SMCLKRATE 16000000
+#define BAUDRATE 9600 //115200 would be ideal
+#define BRDIV16 ((16*SMCLKRATE)/BAUDRATE) //26666
+#define BRDIV (BRDIV16/16) //1666
+#define BRMOD ((BRDIV16-(16*BRDIV)+1)/16) //24999
+#define BRDIVHI (BRDIV/256) //6
+#define BRDIVLO (BRDIV-BRDIVHI*256) //130
+#define UART_TX 0x04
+#define UART_RX 0x02
+
+#define SDA 0x01
+#define SCL 0x02
+
+int bit_count = 0;
+char tx_data;
+
+int main(void) {
+	//calibration for clock
+    BCSCTL1 = CALBC1_16MHZ;
+	DCOCTL  = CALDCO_16MHZ;
+	//Stop watchdog timer
+    WDTCTL = WDTPW | WDTHOLD;
+
+    //I2C data and clock busses are inputs, All other pins on port 2 are outputs
+    P2DIR = ~(SCL + SDA);
+    //Enable pullup resistors, lines high by default
+    P2REN = SCL + SDA;
+    P2IE |= SCL + SDA;
+    P2IES |= SDA; //first interrupt will be triggered on falling edge
+
+
+    //Initializing UART
+    //reset and hold UART state machine
+    UCA0CTL1 = UCSWRST;
+    //SMCLK is clock source
+    UCA0CTL1 |= UCSSEL_2;
+    //set baud parameters, prescaler hi
+    UCA0BR1 = BRDIVHI;
+    //prescaler lo
+    UCA0BR0 = BRDIVLO;
+    //modulation
+    UCA0MCTL = 2*BRMOD;
+    //Connect transmitter pin
+    P1SEL |= UART_TX;
+    P1SEL2 |= UART_TX;
+    //loop mode enabled
+    //UCA0STAT |=  UCLISTEN;
+    //allow the UART state machine to operate
+    UCA0CTL1 &= ~UCSWRST;
+    //Enable transmit interrupt;
+
+    _bis_SR_register(GIE + LPM0_bits);
+}
+
+//UART data transmit handler
+void interrupt tx_handler(){
+	UCA0TXBUF = tx_data;
+	IE2 &= ~UCA0TXIE;
+}
+ISR_VECTOR(tx_handler, ".int06")
+
+
+
+

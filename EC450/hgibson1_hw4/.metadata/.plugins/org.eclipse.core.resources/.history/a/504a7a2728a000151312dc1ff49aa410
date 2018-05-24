@@ -1,0 +1,65 @@
+#include <msp430.h> 
+
+#define SCL 0x40
+#define SDA 0x80
+#define BRLO 0xFF
+#define BRHI 0xFF
+#define BUTTON 0x08
+
+const char data[12] = {"H", "e", "l", "l", "o", " ", "W", "o", "r", "l", "d", "!"};
+unsigned int byte_count = 0;
+
+int main(void) {
+	//calibration for clock
+	BCSCTL1 = CALBC1_1MHZ;
+	DCOCTL  = CALDCO_1MHZ;
+	//Stop watchdog timer
+    WDTCTL = WDTPW | WDTHOLD;
+
+    //Configure USCI
+    UCB0CTL1 |= UCWRST;
+    //I2C mode master mode, syncronus
+    UCB0CTL0 |= UCMST + UCMODE_3 + UCSYNC;
+    //SMCLK is source, transfer mode 1st
+    UCB0CTL1 |= UCSSEL_2 + UCTR;
+    //bit rate divisors
+    UCB0BR0=BRLO;
+    UCB0BR1=BRHI;
+    //Set slave address
+    UCB0I2CSA = 0x50;
+    //No interrupts initially enabled
+    UCB0I2CIE = 0;
+    //configure pins
+    P1SEL |= SCL + SDA;
+    P1SEL2 |= SCL + SDA;
+    //Allow state machine to operate
+    UCB0CTL1 &= ~UCWRST;
+
+    //Configure Button
+    P1DIR &= ~BUTTON;
+    P1REN |= BUTTON;
+    P1IE |= BUTTON;
+	
+    _bis_SR_register(GIE + LPM0_bits);
+}
+
+void interrupt button_handler() {
+	if (P1IFG & BUTTON){
+		P1IFG &= ~BUTTON;
+		P1IE &= ~BUTTON;
+		UCB0I2CIE |= UCB0TXIE;
+	}
+}
+ISR_VECTOR(button_handler, ".int02")
+
+void interrupt I2C_tx_handler() {
+	if (byte_count == 12) {
+		byte_count = 0;
+	} else {
+		UCB0TXBUF = data[byte_count];
+		byte_count = byte_count + 1;
+	}
+	UCB0I2CIE |= UCB0TXIE; //disable transmit iterrupt
+	P1IE |= BUTTON; //reenable button press
+}
+ISR_VECTOR(I2C_tx_handler, ".int06")

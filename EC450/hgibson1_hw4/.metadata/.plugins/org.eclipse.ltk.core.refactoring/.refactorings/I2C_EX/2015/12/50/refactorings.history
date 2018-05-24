@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<session version="1.0">
+<refactoring comment="Rename resource &apos;I2C_EX/triggers.h&apos; to &apos;trigger.h&apos;" description="Rename resource &apos;triggers.h&apos;" flags="7" id="org.eclipse.ltk.core.refactoring.rename.resource" input="triggers.h" name="trigger.h" stamp="1449876047450" updateReferences="true"/>
+</session>

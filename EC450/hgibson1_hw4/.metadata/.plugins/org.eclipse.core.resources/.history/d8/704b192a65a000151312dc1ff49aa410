@@ -1,0 +1,109 @@
+#include <msp430.h> 
+
+#define SMCLKRATE 8000000
+#define BAUDRATE 9600
+#define BRDIV16 ((16*SMCLKRATE)/BAUDRATE)
+#define BRDIV (BRDIV16/16)
+#define BRMOD ((BRDIV16-(16*BRDIV)+1)/16)
+#define BRDIVHI (BRDIV/256)
+#define BRDIVLO (BRDIV-BRDIVHI*256)
+
+#define SDA 0x01
+#define SCL 0x02
+#define UART_TX 0x04
+#define RED 0x01
+#define GREEN 0x40
+
+char byte_data;
+unsigned int bit_count = 0;
+unsigned int data;
+unsigned int clock;
+
+int main(void) {
+	//calibration for clock
+	BCSCTL1 = CALBC1_8MHZ;
+	DCOCTL  = CALDCO_8MHZ;
+	//Stop watchdog timer
+    WDTCTL = WDTPW | WDTHOLD;
+
+    //State LEDS
+    //All pins on port 1 outputs
+    P1DIR = 0xff;
+    //Green on = SCL clock high, Red on = Data line high
+    P1OUT = RED + GREEN;
+
+    //I2C data and clock busses are inputs, All other pins on port 2 are outputs
+    P2DIR = ~(SCL + SDA);
+    //Enable pullup resistors, lines high by default
+    P2REN = SCL + SDA;
+    P2IE = SDA + SCL;
+    //SCL triggered initially on rising edge, SDA triggered initially on falling edge
+    //SDA is looking for a start condition
+    P2IES = SDA;
+
+    //Initializing UART
+    //reset and hold UART state machine
+    UCA0CTL1 = UCSWRST;
+    //SMCLK is clock source
+    UCA0CTL1 |= UCSSEL_2;
+    //set baud parameters, prescaler hi
+    UCA0BR1 = BRDIVHI;
+    //prescaler lo
+    UCA0BR0 = BRDIVLO;
+    //modulation
+    UCA0MCTL = 2*BRMOD;
+    //Connect transmitter pin
+    P1SEL |= UART_TX;
+    P1SEL2 |= UART_TX;
+    //allow the UART state machine to operate
+    UCA0CTL1 &= ~UCSWRST;
+	
+    _bis_SR_register(GIE + LPM0_bits);
+}
+
+
+//I2C line interrupt handler
+void interrupt I2C_pulse(){
+	data = P2IN & SDA;
+	clock = P2IN & SCL;
+	if (P2IFG & SCL && clock) { //The clock line generated the interrupt and the clock is high
+		if (bit_count == 8){
+			//This is an ack or nack, V is ack, W is nach
+			byte_data = 0b01010110 | data;
+			bit_count = 0;
+		} else {
+			byte_data = 0b00110000 | data;
+			bit_count = bit_count + 1;
+		}
+		P2IE |= SDA; //Enable data line interrupt
+		P2IES |= SCL; //next interrupt on falling edge
+		IE2 |= UCA0TXIE;
+		P1OUT |= GREEN;
+	} else if (P2IFG & SCL && !clock) { //clock line generated the interrupt and the clock is low
+		IE2 &= ~UCA0TXIE; //disable transmit interrupt
+		P2IES &= ~SCL; //Next interrupt on rising edge
+		P2IE &= ~SDA; //disable data line interrupt
+		P1OUT &= ~GREEN;
+	} else if (P2IFG & SDA) {
+		byte_data = 0b01011000 | data; //X or Y, X = Start, Y = Stop
+		P2IES ^= SDA; //Data = 1 will set to high to low transition, data == 0 will set to high to low transition
+		IE2 |= UCA0TXIE;
+	}
+	if (data) {
+		P1OUT |= RED;
+	} else {
+		P1OUT &= ~RED;
+	}
+	P2IFG = 0; //Clear port 2 interrupt register
+}
+ISR_VECTOR(I2C_pulse, ".int03")
+
+
+//UART data transmit handler
+void interrupt tx_handler(){
+	IFG2 &= ~UART_TX; //clear interrupt flag
+	UCA0TXBUF = byte_data; //transfer data
+	IE2 &= ~UCA0TXIE; //Disable transmit interrupt
+}
+ISR_VECTOR(tx_handler, ".int06")
+

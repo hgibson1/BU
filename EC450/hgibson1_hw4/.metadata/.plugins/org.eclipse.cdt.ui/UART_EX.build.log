@@ -1,0 +1,12 @@
+
+**** Clean-only build of configuration Debug for project UART_EX ****
+
+"c:\\ti\\ccsv6\\utils\\bin\\gmake" -k clean 
+DEL /F  "UART_EX.out"  "UART_EX.hex" 
+Could Not Find X:\workspace_v6_0\HW4Usable\UART_EX\Debug\UART_EX.out
+DEL /F "main.pp" "uart_out.pp" 
+DEL /F "main.obj" "uart_out.obj" 
+'Finished clean'
+' '
+
+**** Build Finished ****

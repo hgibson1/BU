@@ -1,0 +1,265 @@
+#include <msp430.h> 
+
+#include "msp430g2553.h"
+#include "trigger.h"
+#include "bit_macros.h"
+
+
+// Bit masks for port 1
+#define SCL_BIT 0x40
+#define SDA_BIT 0x80
+
+
+// Parameters for baud rate divisor -- slow as possible!!
+#define BRLO 0xFF
+#define BRHI 0xFF
+#define CLOCK_SOURCE UCSSEL_2
+#define BCS CALBC1_1MHZ;
+#define DCO CALDCO_1MHZ;
+
+
+// Serial Memory I2C address (lowest 3 bits come from A0..A2 pins)
+#define MEM_I2C_ADDR 0x50
+
+// Global Variables
+volatile unsigned char *mem_buf_ptr;
+volatile int mem_count;
+volatile unsigned int mem_address;
+volatile unsigned char mem_op;
+volatile unsigned char mem_state;
+
+volatile unsigned int NAK_count=0;
+
+
+/*
+ * initialize i2c, but do not start the internal state machine for UCB0
+ * (leave the reset bit on!)
+ */
+
+void init_i2c(){
+	BIS(UCB0CTL1,UCSWRST);	// reset the state machine
+	UCB0CTL0=UCMST+UCMODE_3+UCSYNC; // master, i2C mode, synchronous
+	UCB0CTL1=CLOCK_SOURCE + UCTR; // ACLK source, transmit mode first *****
+	UCB0BR0=BRLO; // low byte of bit rate divisor (100 cycles)
+	UCB0BR1=BRHI;
+	UCB0I2CSA = MEM_I2C_ADDR; // PERMANENTLY SET THE I2C ADDRESS (for this demo only!)
+	UCB0I2CIE =0; // status interrupts off
+	// enable SDA and SCL pins
+	BIS(P1SEL,SCL_BIT+SDA_BIT);
+	BIS(P1SEL2,SCL_BIT+SDA_BIT);
+	BIC(UCB0CTL1,UCSWRST); // release the reset
+}
+
+/*
+ * Write Operation
+ *
+ * Routines:
+ * start_write          sets the global parameter and send a start condition
+ *    if the start is acknowledged, the TX handler begins sending the address
+ *    if it fails, the NAK handler resends trying! (could get stuck here!)
+ *
+ * Interrupt actions:
+ * Note that there is a single interrupt for TX/RX with i2c (int 06) and
+ *     a single interrupt for status flags (int 07).
+ * Each of these handlers calls a function that acts based on whether we are in TX mode or RX mode.
+ * TX_handler_action() and TX_NAK_handler_action() are these functions
+ *
+ */
+
+void start_write(unsigned char *buffer, unsigned int address, int count){
+	// initialize globals for this operation
+	mem_op=1; // operation flag for write operation
+    mem_state=0;  // initial state for the state machine
+    mem_address = address;
+    mem_count = count;
+    mem_buf_ptr=buffer;
+
+    // setup the I2C state machine
+	BIS(UCB0CTL1,UCSWRST);	// reset the UCB0 I2C state machine
+	BIS(UCB0I2CIE,UCNACKIE); // enable NAK interrupt
+	BIC(UCB0CTL1,UCSWRST);	// enable the UCB0 I2C state machine
+	BIS(UCB0CTL1,UCTR+UCTXSTT); // send start condition and control byte
+	BIS(IE2,UCB0TXIE); // enable transmit interrupt (interrupt happens)
+}
+
+
+void TX_handler_action(){ // action performed by i2c_handler for TX interrupt
+	unsigned char x;
+	switch(mem_state){
+		case 0: { // start transmission
+			x= *( (unsigned char *) (&mem_address) +1); // msb of address
+		    mem_state=1;
+			UCB0TXBUF=x;
+			break;
+			}
+		case 1: { // ready to place address byte 2
+			x= *( (unsigned char *) (&mem_address)); // lsb of address
+			mem_state=2;
+			UCB0TXBUF=x;
+			break;
+		}
+		case 2: { // sending data bytes
+			x= *mem_buf_ptr++; // fetch the next character
+			--mem_count;	   // decrement the count
+			++mem_address;     // increment our version of the address
+			UCB0TXBUF=x;       // send the character
+			if (mem_count==0){ // are we about to be done
+				BIS(UCB0CTL1,UCTXSTP); // send a stop condition
+				mem_state=3;
+			}
+			break;
+		}
+		case 3: { // stop
+			mem_op=0; // clear the operation code
+			mem_state=0;
+			BIC(UCB0I2CIE,UCNACKIE); // disable NAK interrupt
+			BIC(IE2,UCB0TXIE); // disable transmit interrupt
+			BIC(IFG2,UCB0TXIFG); // clear the TX interrupt flag (needed?)
+		}
+	}
+}
+
+
+void TX_NAK_handler_action(){ // A STUB
+	++NAK_count;
+}
+
+
+/*
+ * Read Subsystem
+ *
+ * Routines:
+ * start_read     sets the global parameters and sends a start condition
+ *    if the start is acknowledged, the TX handler begins sending the address
+ *    then after the address, it sends a restart and reads count times.
+ *    if it fails, the NAK handler resends trying! (could get stuck here!)
+ *
+ * Interrupt actions:
+ * Note that there is a single interrupt for TX/RX with i2c (int 06) and
+ *     a single interrupt for status flags (int 07).
+ * Each of these handlers calls a function that acts based on whether we are in TX mode or RX mode.
+ * RX_handler_action() and RX_NAK_handler_action() are these functions
+ *
+ */
+
+void start_read(unsigned char *buffer, unsigned int address, int count){
+	// initialize globals for this operation
+	mem_op=2; // operation flag for read operation
+    mem_state=0;  // initial state for the state machine
+    mem_address = address;
+    mem_count = count;
+    mem_buf_ptr=buffer;
+
+    // setup the I2C state machine
+	BIS(UCB0CTL1,UCSWRST);	// reset the UCB0 I2C state machine
+	BIS(UCB0I2CIE,UCNACKIE); // enable NAK interrupt
+	BIC(UCB0CTL1,UCSWRST);	// enable the UCB0 I2C state machine
+	BIS(UCB0CTL1,UCTR+UCTXSTT); // set to transmit mode and send start condition
+	BIS(IE2,UCB0TXIE); // enable transmit interrupt
+}
+
+
+void RX_handler_action(){ // action performed by i2c_handler for reading actions interrupts
+	unsigned char x;
+	switch(mem_state){
+		case 0: { // start trasmission of address byte 1
+			x= *( (unsigned char *) (&mem_address) +1); // msb of address
+		    mem_state=1;
+			UCB0TXBUF=x;
+			break;
+			}
+		case 1: { // ready to place address byte 2
+			x= *( (unsigned char *) (&mem_address)); // lsb of address
+			mem_state=2;
+			UCB0TXBUF=x;
+			break;
+		}
+		case 2:{// send a restart condition and switch to RX mode
+			mem_state=3;
+			BIC(IE2,UCB0TXIE); // clear the TX enable
+			BIC(IFG2,UCB0TXIFG+UCB0RXIFG); // clear the TX flag (and Receive flag -- may not be needed)
+			BIC(UCB0CTL1,UCTR); // receive mode for i2C
+			BIS(IE2,UCB0RXIE); // enable receive interrupt
+			BIS(UCB0CTL1,UCTXSTT); // repeat start condition!
+			break;
+		}
+		case 3: { // receiving data bytes (used by receive handler
+			--mem_count;	   // decrement the count (so we can see if this was the last byte)
+			*mem_buf_ptr++ = UCB0RXBUF; // save the next character (and clear RX flag)
+			if (mem_count==0){ // are we going to be done?
+				BIS(UCB0CTL1,UCTXSTP); // if so, prepare to send stop condition
+				BIC(IE2,UCB0RXIE);     // disable receive interrupt
+				mem_op=0;
+			}
+			/* note we have delayed reading the receive buffer until AFTER we have arranged to
+			 * send a stop condition.  This way, if we are done, the bus is held to send the stop.
+			 */
+			++mem_address;     // increment our version of the next address
+			break;
+		}
+	}
+}
+
+
+void RX_NAK_handler_action(){ // A STUB
+	++NAK_count;
+}
+
+interrupt void i2c_handler(){ // handle transmit and receive interrupts
+	if(mem_op==1){
+		TX_handler_action();
+	} else if (mem_op==2){
+		RX_handler_action();
+	}
+}
+ISR_VECTOR(i2c_handler,".int06")
+
+interrupt void i2c_status_handler(){
+	// only NACK interrupt is active
+	BIC(UCB0STAT,UCNACKIFG); // clear flag
+	if(mem_op==1){
+		TX_NAK_handler_action();
+	} else if (mem_op==2){
+		RX_NAK_handler_action();
+	}
+}
+ISR_VECTOR(i2c_status_handler,".int07")
+
+
+
+/*
+ * Test Program
+ */
+
+#define DATALEN 5
+#define ADDR 0x3377
+
+unsigned char outdata[]={0x55,0x6C,0x77,0x78,0xAA};
+//unsigned char outdata[]={1,2,3,4,5};
+unsigned char indata[] = {0,0,0,0,0};
+volatile unsigned int demoOP=2; // bit 0 for write action, bit 1 for read action (note that doing both *may* fail because of timing at high speed)
+
+void main(){
+	// turn off watchdog timer
+	WDTCTL=WDTPW + WDTHOLD;
+  	// set clock speed
+ 	BCSCTL1 = BCS;
+  	DCOCTL = DCO;
+
+  	init_i2c(); // initialize the interface
+  	init_trigger();
+  	_bis_SR_register(GIE);
+
+ 	trigger();
+
+	if(demoOP & 1) start_write(outdata, ADDR, DATALEN);
+
+  	while((mem_op!=0) && (UCB0STAT&UCBBUSY)){}; // busy wait for bus to be done!
+
+  	trigger();
+  	if (demoOP & 2) start_read(indata,ADDR,DATALEN);
+
+  	while((mem_op!=0) && (UCB0STAT&UCBBUSY)){}; // busy wait for bus to be done!
+
+  	while(1){};
+}

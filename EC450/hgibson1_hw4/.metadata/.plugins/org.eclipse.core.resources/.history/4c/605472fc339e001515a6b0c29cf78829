@@ -1,0 +1,106 @@
+#include <msp430.h> 
+
+#define SMCLKRATE 16000000
+#define BAUDRATE 9600
+#define BRDIV16 ((16*SMCLKRATE)/BAUDRATE)
+#define BRDIV (BRDIV16/16)
+#define BRMOD ((BRDIV16-(16*BRDIV)+1)/16)
+#define BRDIVHI (BRDIV/256)
+#define BRDIVLO (BRDIV-BRDIVHI*256)
+
+#define SDA 0x01
+#define SCL 0x02
+#define UART_TX 0x04
+#define UART_RX 0x02
+
+#define FULL_BYTE 8
+unsigned short int bit_count;
+short int byte_data;
+unsigned int byte_timestamp;
+unsigned int clock_timestamp;
+unsigned short int busy;
+
+//TODO get timestamp feature working
+
+int main(void) {
+	BCSCTL1 = CALBC1_16MHZ;    //calibration for clock, fastest possible since so many interrupts
+	DCOCTL  = CALDCO_16MHZ;
+    WDTCTL = WDTPW | WDTHOLD;	// Stop watchdog timer
+
+    //Initializing UART
+    UCA0CTL1 = UCSWRST; // reset and hold UART state machine
+    UCA0CTL1 |= UCSSEL_2; //SMCLK is clock source
+    UCA0BR1 = BRDIVHI; // set baud parameters, prescaler hi
+    UCA0BR0 = BRDIVLO; // prescaler lo
+    UCA0MCTL = 2*BRMOD; // modulation
+    P1SEL |= UART_TX + UART_RX;
+    P1SEL2 |= UART_TX + UART_RX;
+    IE2 |= UCA0RXIE;  //Enable Recieve Interrupt
+    UCA0CTL1 &= ~UCSWRST; // allow the UART state machine to operate
+    UCA0TXBUF = 0b01100001; //"a" for testing
+	
+    //Enable SCL and SDA to interrupt on P2IE register
+    //Determine interrupt edge select on P2ISE register
+    //Flags on P2IFG register
+    //Function select registers are P2SEL and P2SEL2
+    P2DIR &= ~(SCL + SDA); //I2C data and clock busses are inputs
+    P2IE |= SDA + SCL;
+    P2IES |= SDA; //Looking for start condition
+    //P2SEL2 |= SCL + SDA; //Pins connected to timer A1
+
+    //State varibles
+    byte_data = 0;
+    bit_count = 0;
+    busy = 0;
+
+    _bis_SR_register(GIE + LPM0_bits);
+}
+
+inline void shift_byte(){
+
+}
+
+void interrupt I2C_pulse(){
+	if (P2IFG & SCL && busy) {
+		//I2C clock pulse triggered interrupt
+		//Triggered on rising edge
+	    if (bit_count == FULL_BYTE) {
+	    	bit_count = 0;
+			//send data byte w/ UART
+			UCA0TXBUF = byte_data;
+	    } else {
+	    	//Assuming LSB first
+		   	char bit = (P2IN & SDA) << bit_count;
+			byte_data |= bit;
+		    bit_count = bit_count + 1;
+		}
+	} else if (P2IFG & SDA && P2IN & SCL) {
+	    //Data line triggered interrupt
+	    //Start and stop conditions
+		//If SCL is not high (as with normal data transfer) will continue
+	    if (busy){
+			//Since bus is active and SCL is high, must be stop condition
+			busy = 0;
+			P2IES |= SDA; //Set to generate interrupt on falling edge
+		} else {
+			//Since bus is not active and SCL is high must be start condition
+			busy = 1;
+			P2IES &= ~SDA; //Set to generate interrupt on falling edge
+		}
+	}
+	P2IFG &= ~(SDA + SCL); // Clear interrupt flags
+}
+ISR_VECTOR(I2C_pulse, ".int03")
+
+//UART data recieve handler
+void interrupt rx_handler(){
+    //Commands
+	//7, data in 7 bit words
+	//8, data in 8 bit words
+	//l lsb first
+	//m msb first
+	//t send time stamps
+
+}
+ISR_VECTOR(rx_handler,".int07") // declare interrupt v
+

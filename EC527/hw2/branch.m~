@@ -1,0 +1,47 @@
+M = csvread('branch.csv');
+elements = M(50:end,1);
+ordered_if = M(50:end,2)./elements;
+ordered_if(abs(ordered_if - mean(ordered_if)) > std(ordered_if)*3)=mean(ordered_if); 
+random_if = M(50:end,3)./elements;
+
+order_cm = M(50:end,4)./elements;
+random_cm = M(50:end,5)./elements;
+
+
+figure
+scatter(elements, M(50:end,2)./elements, 'r');
+hold
+scatter(elements, M(50:end,3)./elements, 'g');
+xlabel('Elements in Array');
+ylabel('Cycles Per Element');
+title('If-Statement Performance');
+legend('Ordered Data','Random Data');
+
+figure
+scatter(elements, M(50:end,4)./elements, 'r');
+hold
+scatter(elements, M(50:end,5)./elements, 'g');
+xlabel('Elements in Array');
+ylabel('Cycles Per Element');
+title('Conditional Move Performance')
+legend('Ordered Data','Random Data');
+
+figure
+scatter(elements, M(50:end,2)./elements, 'm');
+hold
+scatter(elements, M(50:end,4)./elements, 'b');
+xlabel('Elements in Array');
+ylabel('Cycles Per Element');
+title('Performance with Ordered Data');
+legend('If-Statement','Conditional Move');
+
+figure
+scatter(elements, M(50:end,3)./elements, 'm');
+hold
+scatter(elements, M(50:end,5)./elements, 'b');
+xlabel('Elements in Array');
+ylabel('Cycles Per Element');
+title('Performance with Random Data');
+legend('If-Statement','Conditional Move');
+
+

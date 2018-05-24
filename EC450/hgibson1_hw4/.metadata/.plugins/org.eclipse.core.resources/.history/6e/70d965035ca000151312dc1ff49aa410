@@ -1,0 +1,39 @@
+################################################################################
+# Automatically-generated file. Do not edit!
+################################################################################
+
+# Add inputs and outputs from these tool invocations to the build variables 
+CMD_SRCS += \
+../lnk_msp430g2553.cmd 
+
+C_SRCS += \
+../adc_poll_uart.c \
+../main.c \
+../uart_out.c 
+
+OBJS += \
+./adc_poll_uart.obj \
+./main.obj \
+./uart_out.obj 
+
+C_DEPS += \
+./adc_poll_uart.pp \
+./main.pp \
+./uart_out.pp 
+
+C_DEPS__QUOTED += \
+"adc_poll_uart.pp" \
+"main.pp" \
+"uart_out.pp" 
+
+OBJS__QUOTED += \
+"adc_poll_uart.obj" \
+"main.obj" \
+"uart_out.obj" 
+
+C_SRCS__QUOTED += \
+"../adc_poll_uart.c" \
+"../main.c" \
+"../uart_out.c" 
+
+

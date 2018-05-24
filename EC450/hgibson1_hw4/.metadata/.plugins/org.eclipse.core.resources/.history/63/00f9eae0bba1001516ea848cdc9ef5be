@@ -1,0 +1,90 @@
+#include <msp430g2553.h>
+
+#define SMCLKRATE 8000000
+#define BAUDRATE 9600 //115200 would be ideal
+#define BRDIV16 ((16*SMCLKRATE)/BAUDRATE) //26666
+#define BRDIV (BRDIV16/16) //1666
+#define BRMOD ((BRDIV16-(16*BRDIV)+1)/16) //24999
+#define BRDIVHI (BRDIV/256) //6
+#define BRDIVLO (BRDIV-BRDIVHI*256) //130
+#define UART_TX 0x04
+#define UART_RX 0x02
+
+#define SDA 0x01
+#define SCL 0x02
+
+volatile char last_clock;
+volatile char last_data;
+int bit_count = 0;
+char rx_byte; //for debugging
+
+int main(void) {
+	//calibration for clock
+    BCSCTL1 = CALBC1_8MHZ;
+	DCOCTL  = CALDCO_8MHZ;
+	//Stop watchdog timer
+    WDTCTL = WDTPW | WDTHOLD;
+
+    //I2C data and clock busses are inputs, All other pins on port 2 are outputs
+    P2DIR = ~(SCL + SDA);
+    //Enable pullup resistors, lines high by default
+    P2REN = SCL + SDA;
+
+    //State varibles
+    //Initial setting for last clock and last data are both high since high by default
+	last_clock = SCL;
+	last_data = SDA;
+
+    //Initializing UART
+    //reset and hold UART state machine
+    UCA0CTL1 = UCSWRST;
+    //SMCLK is clock source
+    UCA0CTL1 |= UCSSEL_2;
+    //set baud parameters, prescaler hi
+    UCA0BR1 = BRDIVHI;
+    //prescaler lo
+    UCA0BR0 = BRDIVLO;
+    //modulation
+    UCA0MCTL = 2*BRMOD;
+    //Connect transmitter pin
+    P1SEL |= UART_TX + UART_RX;
+    P1SEL2 |= UART_TX + UART_RX;
+    //loop mode enabled
+    //UCA0STAT |=  UCLISTEN;
+    //allow the UART state machine to operate
+    UCA0CTL1 &= ~UCSWRST;
+    //Enable transmit interrupt;
+    IE2 |= UCA0TXIE + UCA0RXIE;
+
+    _bis_SR_register(GIE + LPM0_bits);
+}
+
+//UART data transmit handler
+void interrupt tx_handler(){
+	//Read clock and data lines
+	char p2in = P2IN;
+	char clock = p2in & SCL;
+	char data = p2in & SDA;
+	if (last_data != data && clock && last_clock) {
+		//start or stop condition
+	    UCA0TXBUF = 0b01011000 | data; //"Prints X for start, Y for stop
+    } else if (!last_clock && clock && bit_count == 8) {
+		//this is an ack or nack
+		UCA0TXBUF = 0b01010110 | data; //Prints V for ack, W for nack
+		bit_count = 0;
+	} else if (!last_clock && clock) {
+		//data bits
+  		UCA0TXBUF = 0b00110000 | data; //prints 1 or 0
+  		bit_count = bit_count + 1;
+	}
+	last_clock = clock;
+	last_data = data;
+}
+ISR_VECTOR(tx_handler, ".int06")
+
+//Uart data recieve handler
+void interrupt rx_handler() {
+	rx_byte = UCA0RXBUF;
+}
+ISR_VECTOR(rx_handler, ".int07")
+

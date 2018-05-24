@@ -1,0 +1,14 @@
+
+**** Clean-only build of configuration Debug for project I2C_monitor3 ****
+
+"c:\\ti\\ccsv6\\utils\\bin\\gmake" -k clean 
+DEL /F  "I2C_monitor3.out"  "I2C_monitor3.hex" 
+Could Not Find X:\workspace_v6_0\HW4Usable\I2C_monitor3\Debug\I2C_monitor3.out
+DEL /F "main.pp" 
+Could Not Find X:\workspace_v6_0\HW4Usable\I2C_monitor3\Debug\main.pp
+DEL /F "main.obj" 
+Could Not Find X:\workspace_v6_0\HW4Usable\I2C_monitor3\Debug\main.obj
+'Finished clean'
+' '
+
+**** Build Finished ****

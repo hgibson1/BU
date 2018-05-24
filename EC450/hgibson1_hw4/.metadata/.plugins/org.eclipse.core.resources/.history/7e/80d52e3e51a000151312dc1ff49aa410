@@ -1,0 +1,134 @@
+#include <msp430.h> 
+
+#define SMCLKRATE 16000000
+#define BAUDRATE 9600
+#define BRDIV16 ((16*SMCLKRATE)/BAUDRATE) //26666
+#define BRDIV (BRDIV16/16) //1666
+#define BRMOD ((BRDIV16-(16*BRDIV)+1)/16) //24999
+#define BRDIVHI (BRDIV/256) //6
+#define BRDIVLO (BRDIV-BRDIVHI*256) //130
+#define UART_TX 0x04
+#define UART_RX 0x02
+
+#define SDA 0x01
+#define SCL 0x02
+
+volatile char last_clock;
+volatile char last_data;
+unsigned int bit_count = 0;
+//Contains 8 data bits transmitted by I2C
+char tx_data = 0;
+char tx_control = 0;
+char test_byte;
+//contains start contion seen (lsb) stop condition from last transmit seen (msb), and ack/nack (second most lsb), nack when 1
+
+
+int main(void) {
+	//calibration for clock
+	    BCSCTL1 = CALBC1_16MHZ;
+		DCOCTL  = CALDCO_16MHZ;
+		//Stop watchdog timer
+	    WDTCTL = WDTPW + WDTHOLD;
+
+	    //I2C data and clock busses are inputs, All other pins on port 2 are outputs
+	    P2DIR = ~(SCL + SDA);
+	    //Enable pullup resistors, lines high by default
+	    P2REN = SCL + SDA;
+
+	    P1DIR |= 0x02; //Pin 1 is an output
+
+	    //State varibles
+	    //Initial setting for last clock and last data are both high since high by default
+		last_clock = SCL;
+		last_data = SDA;
+
+	    //Initializing UART
+	    //reset and hold UART state machine
+	    UCA0CTL1 = UCSWRST;
+	    //SMCLK is clock source
+	    UCA0CTL1 |= UCSSEL_2;
+	    //set baud parameters, prescaler hi
+	    UCA0BR1 = BRDIVHI;
+	    //prescaler lo
+	    UCA0BR0 = BRDIVLO;
+	    //modulation
+	    UCA0MCTL = 2*BRMOD;
+	    //Connect transmitter pin
+	    P1SEL |= UART_TX + UART_RX;
+	    P1SEL2 |= UART_TX + UART_RX;
+	    //loop mode enabled
+	    UCA0STAT |=  UCLISTEN;
+	    //allow the UART state machine to operate
+	    UCA0CTL1 &= ~UCSWRST;
+	    //Enable transmit interrupt;
+	    IE2 |= UCA0RXIE;
+
+	    //Setup timer
+	    TA0CTL |= TACLR; // reset clock
+	    //SMCLK is source, divider is zero, up mode, interrupt enabled
+        TA0CTL = TASSEL_2 + ID_0 + MC_1;
+        TA0CCTL1 = CCIE; // compare mode, output 0, interrupt enabled
+        TA0CCR0 = 0x50; //interrupt generated every 80 clock cycles, 2x per I2C cycle
+        //11 needed to servies interrupt, 69 left for interrupt logic
+
+	    _bis_SR_register(GIE + LPM0_bits);
+}
+
+//Polls input and output pins
+void interrupt timer_handler() {
+	TA0CCTL1 &= ~CCIFG; // clear the interrupt flag
+	//polls clock and data lines
+    char p2in = P2IN;
+    char clock = p2in & SCL;
+    char data = p2in & SDA;
+    if (clock && data != last_data) {
+    	//start or stop condition
+    	if (data) {
+    		//stop condition
+    		tx_control |= (SDA << 7); //moves to lsb position
+    	} else {
+    		//start condition
+    		tx_control |= SDA;
+    	}
+    } else if (!last_clock && clock) {
+    	//clock tranistion from low to high
+    	if (bit_count == 8) {
+    		//Ack or nack
+    		tx_control |= (data << 1); //puts data in second most lsb
+    		bit_count = 0;
+    	} else if (bit_count == 7) {
+    		//MSB data, transmit data byte
+    		tx_data |= (data << bit_count);
+    		bit_count = bit_count + 1;
+    		IE2 |= UCA0TXIE;
+    	} else if (bit_count == 0) {
+    		//LSB data, transmit control byte
+    		tx_data |= (data << bit_count);
+    		bit_count = bit_count + 1;
+    		IE2 |= UCA0TXIE;
+    	} else {
+    		//other data bits
+    		tx_data |= (data << bit_count);
+    		bit_count = bit_count + 1;
+    	}
+    }
+}
+ISR_VECTOR(timer_handler, ".int08")
+
+void interrupt tx_handler() {
+	if (bit_count == 0) {
+		//Transmits controll info if data info not recieved yet
+		UCA0TXBUF = tx_control;
+	} else {
+		//transmits data info if recieved
+		UCA0TXBUF = tx_data;
+	}
+	IE2 &= ~UCA0TXIE;
+}
+ISR_VECTOR(tx_handler, ".int06")
+
+
+void interrupt rx_handler() {
+	text_byte = UCA0RXBUF;
+}
+ISR_VECTOR(rx_handler, ".int07")
